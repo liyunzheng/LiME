@@ -85,6 +85,32 @@ static inline int lime_is_ram(struct resource *r)
 }
 #endif
 
+unsigned long mem = 0;
+unsigned long size = 0;
+
+static inline int should_dump_range(struct resource *res)
+{
+    if (size == 0)
+        return 1;
+
+    if (res->end < mem || res->start >= mem + size)
+        return 0;
+
+    return 1;
+}
+
+static inline void clip_range(struct resource *res)
+{
+    if (size == 0)
+        return;
+
+    if (res->start < mem)
+        res->start = mem;
+
+    if (res->end >= mem + size)
+        res->end = mem + size - 1;
+}
+
 static char * format = NULL;
 static int mode = 0;
 static int method = 0;
@@ -108,6 +134,8 @@ module_param(dio, int, S_IRUGO);
 module_param(format, charp, S_IRUGO);
 module_param(localhostonly, int, S_IRUGO);
 module_param(digest, charp, S_IRUGO);
+module_param(mem, ulong, S_IRUGO);
+module_param(size, ulong, S_IRUGO);
 
 #ifdef LIME_SUPPORTS_TIMING
 static long timeout = 1000;
@@ -145,6 +173,15 @@ static int __init lime_init_module (void)
 #ifdef LIME_SUPPORTS_DEFLATE
     DBG("  COMPRESS: %u", compress);
 #endif
+
+    if (size > 0) {
+        DBG("  MEM: 0x%lx", mem);
+        DBG("  SIZE: 0x%lx", size);
+        if (mem + size < mem) {
+            DBG("Invalid mem/size parameters: overflow detected");
+            return -EINVAL;
+        }
+    }
 
     if (!strcmp(format, "raw")) mode = LIME_MODE_RAW;
     else if (!strcmp(format, "lime")) mode = LIME_MODE_LIME;
@@ -210,17 +247,35 @@ static int init(void) {
             continue;
         }
 
-        if (mode == LIME_MODE_LIME && write_lime_header(p) < 0) {
-            DBG("Error writing header 0x%llx - 0x%llx", (unsigned long long) p->start, (unsigned long long) p->end);
-            break;
-        } else if (mode == LIME_MODE_PADDED && write_padding((size_t) ((p->start - 1) - p_last)) < 0) {
-            DBG("Error writing padding 0x%llx - 0x%llx", (unsigned long long) p_last, (unsigned long long) (p->start - 1));
-            break;
+        if (!should_dump_range(p)) {
+            p = lime_skip_subtree(p);
+            continue;
         }
 
-        write_range(p);
+        {
+            struct resource clipped;
+            clipped.start = p->start;
+            clipped.end = p->end;
+            clipped.flags = p->flags;
+            clipped.name = p->name;
+            clipped.parent = p->parent;
+            clipped.sibling = p->sibling;
+            clipped.child = p->child;
+            
+            clip_range(&clipped);
 
-        p_last = p->end;
+            if (mode == LIME_MODE_LIME && write_lime_header(&clipped) < 0) {
+                DBG("Error writing header 0x%llx - 0x%llx", (unsigned long long) clipped.start, (unsigned long long) clipped.end);
+                break;
+            } else if (mode == LIME_MODE_PADDED && write_padding((size_t) ((clipped.start - 1) - p_last)) < 0) {
+                DBG("Error writing padding 0x%llx - 0x%llx", (unsigned long long) p_last, (unsigned long long) (clipped.start - 1));
+                break;
+            }
+
+            write_range(&clipped);
+
+            p_last = clipped.end;
+        }
 
         /* Children are sub-ranges already covered — skip them. */
         p = lime_skip_subtree(p);
