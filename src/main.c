@@ -388,12 +388,13 @@ static void write_range(struct resource * res) {
         is = min((size_t) PAGE_SIZE, (size_t) (res->end - i + 1));
 #endif
 
-        if (is < PAGE_SIZE) {
-            // We can't map partial pages and
-            // the linux kernel doesn't use them anyway
-            DBG("Padding partial page: addr 0x%llx size: %lu", (unsigned long long) i, (unsigned long) is);
-            write_padding(is);
-        } else if (unlikely(!pfn_valid(i >> PAGE_SHIFT))) {
+        //if (is < PAGE_SIZE) {
+        //    // We can't map partial pages and
+        //    // the linux kernel doesn't use them anyway
+        //    DBG("Padding partial page: addr 0x%llx size: %lu", (unsigned long long) i, (unsigned long) is);
+        //    write_padding(is);
+        //} else 
+        if (unlikely(!pfn_valid(i >> PAGE_SHIFT))) {
             // Guard against invalid PFNs which can occur on SPARSEMEM
             // configs, during memory hotremove, or on unusual NUMA layouts
             DBG("Invalid PFN 0x%llx, writing padding", (unsigned long long)(i >> PAGE_SHIFT));
