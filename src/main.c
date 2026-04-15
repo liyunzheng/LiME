@@ -29,7 +29,7 @@ static ssize_t write_lime_header(struct resource *);
 static ssize_t write_padding(size_t);
 static void write_range(struct resource *);
 static int init(void);
-static ssize_t write_vaddr(void *, size_t);
+static ssize_t write_vaddr(void *, size_t, size_t);
 static ssize_t write_flush(void);
 static ssize_t try_write(void *, ssize_t);
 static int setup(void);
@@ -338,7 +338,7 @@ static ssize_t write_lime_header(struct resource * res) {
     header.s_addr = res->start;
     header.e_addr = res->end;
 
-    return write_vaddr(&header, sizeof(lime_mem_range_header));
+    return write_vaddr(&header, sizeof(lime_mem_range_header), 0);
 }
 
 static ssize_t write_padding(size_t s) {
@@ -350,7 +350,7 @@ static ssize_t write_padding(size_t s) {
     while(s -= i) {
 
         i = min((size_t) PAGE_SIZE, s);
-        r = write_vaddr(vpage, i);
+        r = write_vaddr(vpage, i, 0);
 
         if (r != i) {
             DBG("Error sending zero page: %zd", r);
@@ -383,9 +383,15 @@ static void write_range(struct resource * res) {
         start = ktime_get_real();
 #endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
-        is = min((resource_size_t) PAGE_SIZE, (resource_size_t) (res->end - i + 1));
+        {
+            resource_size_t page_remain = PAGE_SIZE - offset_in_page(i);
+            is = min(page_remain, (resource_size_t) (res->end - i + 1));
+        }
 #else
-        is = min((size_t) PAGE_SIZE, (size_t) (res->end - i + 1));
+        {
+            size_t page_remain = PAGE_SIZE - offset_in_page(i);
+            is = min(page_remain, (size_t) (res->end - i + 1));
+        }
 #endif
 
         //if (is < PAGE_SIZE) {
@@ -417,7 +423,7 @@ static void write_range(struct resource * res) {
 #endif
             lime_unmap_page(v, p);
 
-            s = write_vaddr(vpage, is);
+            s = write_vaddr(vpage, is, offset_in_page(i));
             if (s < 0) {
                 DBG("Failed to write page: addr 0x%llx. Skipping Range...", (unsigned long long) i);
                 break;
@@ -437,17 +443,18 @@ static void write_range(struct resource * res) {
     }
 }
 
-static ssize_t write_vaddr(void * v, size_t is) {
+static ssize_t write_vaddr(void * v, size_t is, size_t offset) {
     ssize_t ret;
+    void * src = (char *)v + offset;
 
     if (compute_digest == LIME_DIGEST_COMPUTE)
-        compute_digest = ldigest_update(v, is);
+        compute_digest = ldigest_update(src, is);
 
 #ifdef LIME_SUPPORTS_DEFLATE
     if (compress) {
         /* Run deflate() on input until output buffer is not full. */
         do {
-            ret = try_write(deflate_page_buf, deflate(v, is));
+            ret = try_write(deflate_page_buf, deflate(src, is));
             if (ret < 0)
                 return ret;
         } while (ret == PAGE_SIZE);
@@ -455,7 +462,7 @@ static ssize_t write_vaddr(void * v, size_t is) {
     }
 #endif
 
-    return try_write(v, is);
+    return try_write(src, is);
 }
 
 static ssize_t write_flush(void) {
