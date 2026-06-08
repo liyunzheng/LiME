@@ -11,6 +11,7 @@ other tools designed for Linux memory acquisition.
 
 * [Features](#features)
 * [Usage](#usage)
+  * [Dump Specific Physical Memory Address](#dump-specific-physical-memory-address)
   * [Examples](#examples)
 * [Available Digests](#available-digests)
 * [Compression](#compression)
@@ -40,7 +41,9 @@ insmod ./lime-$(uname -r).ko "path=<outfile | tcp:<port>>
     [dio=<0|1>]
     [compress=<0|1>]
     [localhostonly=<0|1>]
-    [timeout=<ms>]"
+    [timeout=<ms>]
+    [mem=<physical_address>]
+    [size=<bytes>]"
 
 path (required):
     outfile ~ name of file to write to on local system
@@ -94,6 +97,60 @@ timeout (optional):
            be acquired.
     This feature is only available on kernels >= 2.6.35.
 ```
+
+## Dump Specific Physical Memory Address
+
+LiME supports dumping a specific physical memory range by specifying the
+starting address and size. This is useful when you only need to inspect a
+particular region of physical memory (e.g., device MMIO, a known kernel
+structure, or a DMA buffer) rather than acquiring the entire system RAM.
+
+### Parameters
+
+```text
+mem (optional):
+    Starting physical address (unsigned long) of the memory region
+    to dump. Supports non-page-aligned addresses.
+
+size (optional):
+    Size in bytes of the memory region to dump. Supports sizes
+    smaller than PAGE_SIZE. When size=0 (default), the entire
+    system RAM is dumped (original behavior).
+```
+
+### Examples
+
+Dump 4KB starting at physical address 0x100000:
+
+```bash
+insmod ./lime-$(uname -r).ko "path=/tmp/mem_region.lime format=lime mem=0x100000 size=0x1000"
+```
+
+Dump 256 bytes at a non-page-aligned address (e.g., inspecting a specific
+hardware register region):
+
+```bash
+insmod ./lime-$(uname -r).ko "path=/tmp/hwreg.raw format=raw mem=0xfee00030 size=0x100"
+```
+
+Dump a 1MB region and send over network:
+
+```bash
+insmod ./lime-$(uname -r).ko "path=tcp:4444 format=lime mem=0x80000000 size=0x100000"
+```
+
+### Notes
+
+- When `mem` and `size` are specified, only the RAM ranges overlapping
+  `[mem, mem+size)` are dumped; all other ranges are skipped.
+- Non-page-aligned start addresses are handled correctly — the dump
+  begins at the exact byte offset within the page.
+- Sizes smaller than PAGE_SIZE are supported (the old partial-page
+  padding behavior is bypassed).
+- An overflow check is performed: if `mem + size` wraps around, the
+  module returns `-EINVAL`.
+- When `mem` and `size` are omitted (or `size=0`), LiME behaves
+  exactly as before — dumping all system RAM.
 
 ## Examples
 
